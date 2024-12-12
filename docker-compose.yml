@@ -1,0 +1,14 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${RUN_PORT:-8000}:8000"
+    environment:
+      - RUN_PORT=${RUN_PORT:-8000}
+      - DEBUG=${DEBUG:-True}
+      
+      - REQUESTS_URL=${REQUESTS_URL:-https://api.openai.com}
+      - REQUESTS_MAX_RETRIES=${REQUESTS_MAX_RETRIES:-3}
+    command: /app/start.sh

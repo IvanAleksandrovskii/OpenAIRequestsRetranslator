@@ -1,13 +1,22 @@
-from fastapi import FastAPI, Request, HTTPException, Response
-import httpx
-import uvicorn
-import json
+# main.py
+
 import asyncio
+import httpx
+import json
+import uvicorn
+
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
+
+from config import settings
+from logger import log
+
 
 app = FastAPI(title="HTTP Ретранслятор")
 
-MAX_RETRIES = 3  # Максимальное количество попыток
-RETRY_DELAY = 1  # Задержка между попытками (в секундах)
+MAX_RETRIES = settings.requests.max_retries  # Максимальное количество попыток
+RETRY_DELAY = settings.requests.retry_delay_sec  # Задержка между попытками (в секундах)
+REQUEST_TIMEOUT = settings.requests.timeout  # Таймаут запроса
 
 
 async def make_request_with_retries(client, method, url, headers, params, content):
@@ -31,11 +40,11 @@ async def make_request_with_retries(client, method, url, headers, params, conten
                 params=params,
                 content=content,
                 follow_redirects=True,
-                timeout=30,
+                timeout=REQUEST_TIMEOUT,
             )
             return response
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            print(f"Попытка {attempt + 1} из {MAX_RETRIES} не удалась: {e}")
+            log.error(f"Retry {attempt + 1} of {MAX_RETRIES} failed: {e}")
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(RETRY_DELAY)
             else:
@@ -52,7 +61,7 @@ async def relay_request(request: Request, path: str):
     :return: Ответ от целевого сервера
     """
     # Укажите целевой URL для перенаправления
-    target_url = "https://api.openai.com"
+    target_url = settings.requests.url
     
     # Создаём полный URL для перенаправления
     full_target_url = f"{target_url}/{path}"
@@ -66,7 +75,7 @@ async def relay_request(request: Request, path: str):
         if key.lower() not in ["host", "content-length"]
     }
     
-    print("request_body:", request_body, "headers:", headers)
+    log.info("request_body: %s headers: %s", request_body, headers)
     
     async with httpx.AsyncClient() as client:
         try:
@@ -82,9 +91,9 @@ async def relay_request(request: Request, path: str):
             
             # Попытка парсинга JSON-ответа
             try:
-                print("------------------- Ответ в JSON -------------------")
+                log.info("------------------- JSON Response -------------------")
                 response_json = response.json()
-                print("response_json:", response_json)
+                log.info("response_json: %s", response_json)
 
                 new_headers = {
                     'date': response.headers.get('date'),
@@ -100,24 +109,34 @@ async def relay_request(request: Request, path: str):
                     headers=new_headers,
                     media_type="application/json"
                 )
-            except json.JSONDecodeError:
-                print("------------------- Ответ не в JSON -------------------")
-                print("response.content:", response.content)
+            except json.JSONDecodeError:  # TODO: Double check
+                log.info("------------------- Not JSON Response -------------------")
+                log.info("response.content: %s", response.content)
 
                 # Если ответ не в JSON, возвращаем как есть
                 return Response(
                     content=response.content,
                     status_code=response.status_code,
-                    headers=dict(response.headers)
+                    headers=new_headers
                 )
         
         except Exception as e:  # httpx.RequestError
             # Обработка ошибок
             raise HTTPException(
                 status_code=500,
-                detail=f"Ошибка при перенаправлении: {e}"
+                detail=f"Error during redirection: {e}"
             )
 
 
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors.allow_origins,
+    allow_credentials=True,
+    allow_methods=settings.cors.allow_methods,
+    allow_headers=settings.cors.allow_headers,
+)
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host=settings.run.host, port=settings.run.port)

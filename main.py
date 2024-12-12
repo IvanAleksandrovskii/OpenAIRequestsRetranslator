@@ -30,7 +30,8 @@ async def make_request_with_retries(client, method, url, headers, params, conten
                 headers=headers,
                 params=params,
                 content=content,
-                follow_redirects=True
+                follow_redirects=True,
+                timeout=30,
             )
             return response
         except (httpx.RequestError, httpx.HTTPStatusError) as e:

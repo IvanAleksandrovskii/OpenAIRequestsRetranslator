@@ -2,8 +2,44 @@ from fastapi import FastAPI, Request, HTTPException, Response
 import httpx
 import uvicorn
 import json
+import asyncio
 
 app = FastAPI(title="HTTP Ретранслятор")
+
+MAX_RETRIES = 3  # Максимальное количество попыток
+RETRY_DELAY = 1  # Задержка между попытками (в секундах)
+
+
+async def make_request_with_retries(client, method, url, headers, params, content):
+    """
+    Выполняет запрос с повторными попытками при ошибке.
+    
+    :param client: Экземпляр httpx.AsyncClient
+    :param method: HTTP-метод
+    :param url: URL целевого запроса
+    :param headers: Заголовки запроса
+    :param params: Параметры запроса
+    :param content: Тело запроса
+    :return: Ответ от целевого сервера
+    """
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = await client.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                content=content,
+                follow_redirects=True
+            )
+            return response
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            print(f"Попытка {attempt + 1} из {MAX_RETRIES} не удалась: {e}")
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(RETRY_DELAY)
+            else:
+                raise
+            
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def relay_request(request: Request, path: str):
@@ -33,23 +69,22 @@ async def relay_request(request: Request, path: str):
     
     async with httpx.AsyncClient() as client:
         try:
-            # Перенаправляем запрос с теми же параметрами, что и во входящем запросе
-            response = await client.request(
+            # Используем функцию с повторными попытками
+            response = await make_request_with_retries(
+                client=client,
                 method=request.method,
                 url=full_target_url,
                 headers=headers,
                 params=request.query_params,
-                content=request_body,
-                follow_redirects=True
+                content=request_body
             )
             
             # Попытка парсинга JSON-ответа
             try:
+                print("------------------- Ответ в JSON -------------------")
                 response_json = response.json()
                 print("response_json:", response_json)
 
-                print("response.headers:", response.headers)
-                
                 new_headers = {
                     'date': response.headers.get('date'),
                     'content-type': response.headers.get('content-type'),
@@ -65,6 +100,9 @@ async def relay_request(request: Request, path: str):
                     media_type="application/json"
                 )
             except json.JSONDecodeError:
+                print("------------------- Ответ не в JSON -------------------")
+                print("response.content:", response.content)
+
                 # Если ответ не в JSON, возвращаем как есть
                 return Response(
                     content=response.content,

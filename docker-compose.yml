@@ -7,6 +7,7 @@ services:
       - "${RUN_PORT:-8000}:8000"
     environment:
       - RUN_PORT=${RUN_PORT:-8000}
+      - RUN_WORKERS=${RUN_WORKERS:-2}
       - DEBUG=${DEBUG:-True}
       
       - REQUESTS_URL=${REQUESTS_URL:-https://api.openai.com}

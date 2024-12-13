@@ -25,6 +25,9 @@ CORS_ALLOW_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", ["*"])
 CORS_ALLOW_METHODS = os.getenv("CORS_ALLOW_METHODS", ["*"])
 CORS_ALLOW_HEADERS = os.getenv("CORS_ALLOW_HEADERS", ["*"])
 
+HTTP_CLIENT_TIMEOUT = int(os.getenv("HTTP_CLIENT_TIMEOUT", "300"))
+HTTP_CLIENTS_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_CLIENTS_MAX_KEEPALIVE_CONNECTIONS", "10"))
+
 
 class RunConfig(BaseModel):
     host: str = RUN_HOST
@@ -47,10 +50,16 @@ class CORSConfig(BaseModel):
     allow_headers: list[str] = CORS_ALLOW_HEADERS
 
 
+class HTTPClientConfig(BaseModel):
+    timeout: int = HTTP_CLIENT_TIMEOUT
+    max_keepalive_connections: int = HTTP_CLIENTS_MAX_KEEPALIVE_CONNECTIONS
+
+
 class Settings(BaseSettings):
     run: RunConfig = RunConfig()
     requests: RequestsConfig = RequestsConfig()
     cors: CORSConfig = CORSConfig()
+    http_client: HTTPClientConfig = HTTPClientConfig()
 
 
 settings = Settings()

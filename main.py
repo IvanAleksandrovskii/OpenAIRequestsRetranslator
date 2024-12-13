@@ -4,19 +4,25 @@ import asyncio
 import httpx
 import json
 import uvicorn
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from logger import log
+from http_client_manager import client_manager
 
 
 app = FastAPI(title="HTTP Ретранслятор")
 
-MAX_RETRIES = settings.requests.max_retries  # Максимальное количество попыток
-RETRY_DELAY = settings.requests.retry_delay_sec  # Задержка между попытками (в секундах)
-REQUEST_TIMEOUT = settings.requests.timeout  # Таймаут запроса
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    await client_manager.start()
+    yield
+    await client_manager.dispose_all_clients()
 
 
 async def make_request_with_retries(client, method, url, headers, params, content):
@@ -31,25 +37,28 @@ async def make_request_with_retries(client, method, url, headers, params, conten
     :param content: Тело запроса
     :return: Ответ от целевого сервера
     """
-    for attempt in range(MAX_RETRIES):
+    
+    http_client = await client_manager.get_client()
+    for attempt in range(settings.requests.max_retries):
         try:
-            response = await client.request(
+            response = await http_client.request(
                 method=method,
                 url=url,
                 headers=headers,
                 params=params,
                 content=content,
                 follow_redirects=True,
-                timeout=REQUEST_TIMEOUT,
+                timeout=settings.requests.timeout,
             )
             return response
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            log.error(f"Retry {attempt + 1} of {MAX_RETRIES} failed: {e}")
-            if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(RETRY_DELAY)
+            log.error(f"Retry {attempt + 1} of {settings.requests.max_retries} failed: {e}")
+            if attempt < settings.requests.max_retries - 1:
+                await asyncio.sleep(settings.requests.retry_delay_sec)
             else:
                 raise
-            
+        finally:
+            await client_manager.release_client(http_client)
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def relay_request(request: Request, path: str):
